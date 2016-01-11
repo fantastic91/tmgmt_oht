@@ -1,0 +1,20 @@
+<?php
+
+/**
+ * @file
+ * Module file of the translation management OHT module.
+ */
+
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Site\Settings;
+use Drupal\tmgmt\Entity\RemoteMapping;
+use Drupal\tmgmt\Entity\JobItem;
+
+define('TMGMT_OHT_COMMENTS_CACHE_EXPIRE', 900);
+
+/**
+ * Create secret hash for OHT reference.
+ */
+function tmgmt_oht_hash($id) {
+  return md5(Settings::getHashSalt() . $id);
+}

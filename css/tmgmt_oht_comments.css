@@ -1,0 +1,11 @@
+#tmgmt-oht-comments-wrapper table td.meta {
+  width: 200px;
+}
+
+#tmgmt-oht-comments-wrapper table tr.odd td.meta {
+  background-color: #f3f4ee;
+}
+
+#tmgmt-oht-comments-wrapper table tr.even td.meta {
+  background-color: #e1e2dc;
+}

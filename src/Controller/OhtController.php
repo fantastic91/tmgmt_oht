@@ -25,9 +25,10 @@ class OhtController extends ControllerBase {
    */
   public function callback(Request $request) {
     // If translation submitted - handle it.
-    $event = past_event_create('oht', 'item', 'Request var_dump', [
-      'request' => $request,
-    ])->save();
+    $event = past_event_create('oht', 'item', 'Request var_dump');
+    $event->addArgument('request', $request);
+    $event->save();
+
     if ($request->request->get('event') == 'project.resources.new' && $request->request->get('resource_type') == 'translation') {
       /** @var JobItem $job_item */
       if ($request->request->get('custom1') == tmgmt_oht_hash($request->request->get('custom0'))) {

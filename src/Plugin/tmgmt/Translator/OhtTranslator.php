@@ -7,18 +7,18 @@
 
 namespace Drupal\tmgmt_oht\Plugin\tmgmt\Translator;
 
-use Drupal\tmgmt_oht\OhtConnector;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Drupal\Core\Url;
 use Drupal\tmgmt\Entity\Job;
+use Drupal\tmgmt\Entity\RemoteMapping;
 use Drupal\tmgmt\TMGMTException;
 use Drupal\tmgmt\TranslatorPluginBase;
+use GuzzleHttp\Exception\BadResponseException;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use GuzzleHttp\ClientInterface;
 use Drupal\tmgmt\TranslatorInterface;
 use Drupal\tmgmt\JobInterface;
-use Drupal\Core\Url;
 use Drupal\tmgmt\Entity\JobItem;
-use Drupal\tmgmt\Entity\RemoteMapping;
 use Drupal\tmgmt\Translator\AvailableResult;
 
 /**
@@ -28,10 +28,54 @@ use Drupal\tmgmt\Translator\AvailableResult;
  *   id = "oht",
  *   label = @Translation("OHT translator"),
  *   description = @Translation("A OneHourTranslation translator service."),
- *   ui = "Drupal\tmgmt_oht\OhtTranslatorUi",
+ *   ui = "Drupal\tmgmt_oht\OhtTranslatorUi"
  * )
  */
 class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPluginInterface {
+
+  /**
+   * Translation service URL.
+   */
+  const PRODUCTION_URL = 'https://api.onehourtranslation.com/api';
+
+  /**
+   * Translation sandbox service URL.
+   */
+  const SANDBOX_URL = 'https://sandbox.onehourtranslation.com/api';
+
+  /**
+   * Translation service API version.
+   *
+   * @var string
+   */
+  const API_VERSION = '2';
+
+  /**
+   * The translator entity.
+   *
+   * @var TranslatorInterface
+   */
+  private $entity;
+
+  /**
+   * Sets a Translator entity.
+   *
+   * @param \Drupal\tmgmt\TranslatorInterface $translator
+   */
+  public function setEntity(TranslatorInterface $translator) {
+    if (!isset($this->entity)) {
+      $this->entity = $translator;
+    }
+  }
+
+  /**
+   * Flag to trigger debug watchdog logging of requests.
+   *
+   * Use variable_set('tmgmt_oht_debug', TRUE); to toggle debugging.
+   *
+   * @var bool
+   */
+  private $debug = FALSE;
 
   /**
    * {@inheritdoc}
@@ -143,7 +187,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   protected $supportedRemoteLanguages = array();
 
   /**
-   * Constructs a OHTTranslator object.
+   * Constructs a OhtTranslator object.
    *
    * @param \GuzzleHttp\ClientInterface $client
    *   The Guzzle HTTP client.
@@ -175,33 +219,27 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
    * {@inheritdoc}
    */
   public function requestTranslation(JobInterface $job) {
-    $translator = $job->getTranslator();
-    $xlf_converter = \Drupal::service('plugin.manager.tmgmt_file.format')->createInstance('xlf');
+    /** @var \Drupal\tmgmt_file\Format\FormatInterface $xliff_converter */
+    $xliff_converter = \Drupal::service('plugin.manager.tmgmt_file.format')->createInstance('xlf');
+    $this->setEntity($job->getTranslator());
 
-    /**
-     * @var JobItem $job_item
-     */
+    /** @var JobItem $job_item */
     $job_item = NULL;
     $oht_uuid = NULL;
 
     try {
       foreach ($job->getItems() as $job_item) {
-        $conditions = array('tjiid' => array('value' => $job_item->tjiid));
-        $xlf = $xlf_converter->export($job, $conditions);
-        $name = "JobID" . $job->tjid . '_JobItemID' . $job_item->tjiid . '_' . $job->source_language . '_' . $job->target_language;
-        $connector = $this->getConnector($translator);
-        $oht_uuid = $connector->uploadFileResource($xlf, $name);
+        $job_item_id = $job_item->id();
+        $source_language = $job->getRemoteSourceLanguage();
+        $target_language = $job->getRemoteTargetLanguage();
+
+        $conditions = array('tjiid' => array('value' => $job_item_id));
+        $xliff = $xliff_converter->export($job, $conditions);
+        $name = "JobID_{$job->id()}_JobItemID_{$job_item_id}_{$source_language}_{$target_language}";
+        $oht_uuid = $this->uploadFileResource($xliff, $name);
         $oht_uuid = array_shift($oht_uuid);
 
-        $result = $connector->newTranslationProject(
-          $job_item->tjiid,
-          $this->mapToRemoteLanguage($translator, $job->source_language),
-          $this->mapToRemoteLanguage($translator, $job->target_language),
-          $oht_uuid,
-          $job->settings['notes'],
-          $job->settings['expertise']
-        );
-
+        $result = $this->newTranslationProject($job_item_id, $source_language, $target_language, $oht_uuid, $job->getSetting('notes'), $job->getSetting('expertise'));
         $job_item->addRemoteMapping(NULL, $result['project_id'], array(
           'remote_identifier_2' => $oht_uuid,
           'word_count' => $result['wordcount'],
@@ -217,14 +255,100 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
       $job->submitted('Job has been successfully submitted for translation.');
     }
     catch (TMGMTException $e) {
-      watchdog_exception('tmgmt_oht', $e);
+      \Drupal::logger('tmgmt_oht')->error('Job has been rejected with following error: @error',
+        array('@error' => $e->getMessage()));
       $job->rejected('Job has been rejected with following error: @error',
         array('@error' => $e->getMessage()), 'error');
     }
   }
 
   /**
-   * Implements TMGMTTranslatorPluginControllerInterface::getDefaultRemoteLanguagesMappings().
+   * Does a request to OHT services.
+   *
+   * @param string $path
+   *   Resource path.
+   * @param string $method
+   *   HTTP method (GET, POST...)
+   * @param array $params
+   *   Form parameters to send to OHT service.
+   * @param bool $download
+   *   If we expect resource to be downloaded.
+   * @param string $content_type
+   *   (optional) Content-type to use.
+   *
+   * @return object
+   *   Response object from OHT.
+   *
+   * @throws \Drupal\tmgmt\TMGMTException
+   */
+  protected function request($path, $method = 'GET', $params = array(), $download = FALSE, $content_type = 'application/x-www-form-urlencoded') {
+    $options = array();
+    if ($this->entity->getSetting('use_sandbox')) {
+      $url = self::SANDBOX_URL . '/' . self::API_VERSION . '/' . $path;
+    }
+    else {
+      $url = self::PRODUCTION_URL . '/' . self::API_VERSION . '/' . $path;
+    }
+
+    try {
+      if ($method == 'GET') {
+        // Add query parameters into options.
+        $params += [
+          'public_key' => $this->entity->getSetting('api_public_key'),
+          'secret_key' => $this->entity->getSetting('api_secret_key'),
+        ];
+        $options['query'] = $params;
+      }
+      elseif ($method == 'POST') {
+        $options = $params;
+      }
+      $response = $this->client->request($method, $url, $options);
+
+      if ($this->debug) {
+        \Drupal::logger('tmgmt_oht')->info("Sending request to OHT at @url method @method with data @data\n\nResponse: @response", array(
+          '@url' => $url,
+          '@method' => $method,
+          '@data' => var_export($options, TRUE),
+          '@response' => var_export($response, TRUE),
+        ));
+      }
+    } catch (BadResponseException $e) {
+      $response = $e->getResponse();
+      throw new TMGMTException('Unable to connect to OHT service due to following error: @error', ['@error' => $response->getReasonPhrase()], $response->getStatusCode());
+    }
+
+    if ($response->getStatusCode() != 200) {
+      throw new TMGMTException('Unable to connect to the OHT service due to following error: @error at @url',
+        array('@error' => $response->getStatusCode(), '@url' => $url));
+    }
+
+    // If we are expecting a download, just return received data.
+    $received_data = $response->getBody()->getContents();
+    if ($download) {
+      return $received_data;
+    }
+    $received_data = json_decode($received_data, TRUE);
+
+    if ($received_data['status']['code'] != 0) {
+      throw new TMGMTException('OHT service returned validation error: #%code %error',
+        array(
+          '%code' => $received_data['status']['code'],
+          '%error' => $received_data['status']['msg'],
+        ));
+    }
+
+    if (!empty($received_data['errors'])) {
+      \Drupal::logger('tmgmt_oht')
+        ->notice('OHT error: @error', array('@error' => implode('; ', $received_data['errors'])));
+      throw new TMGMTException('OHT service returned following error: %error',
+        array('%error' => $received_data['status']['msg']));
+    }
+
+    return $received_data['results'];
+  }
+
+  /**
+   * {@inheritdoc}
    */
   public function getDefaultRemoteLanguagesMappings() {
     return $this->ohtLanguagesMapping;
@@ -239,9 +363,8 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     }
 
     try {
-      $connector = $this->getConnector($translator);
-      $result = $connector->getSupportedLanguages();
-      $result = json_decode($result, TRUE);
+      $supported_languages = $this->request('discover/languages', 'GET', array(), TRUE);
+      $result = json_decode($supported_languages, TRUE);
 
       // Parse languages.
       if (isset($result['results'])) {
@@ -258,29 +381,12 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   /**
    * {@inheritdoc}
    */
-  public function getSupportedTargetLanguages(TranslatorInterface $translator, $source_language) {
-    $results = array();
-    $language_pairs = $translator->getSupportedLanguagePairs();
-    foreach ($language_pairs as $language_pair) {
-      if ($source_language == $translator->mapToLocalLanguage($language_pair['source_language'])) {
-        $target_language = $translator->mapToLocalLanguage($language_pair['target_language']);
-        $results[$target_language] = $target_language;
-      }
-    }
-
-    return $results;
-  }
-
-  /**
-   * {@inheritdoc}
-   */
   public function getSupportedLanguagePairs(TranslatorInterface $translator) {
     $language_pairs = array();
 
     try {
-      $connector = $this->getConnector($translator);
-      $result = $connector->getSupportedLanguagePairs();
-      $result = json_decode($result, TRUE);
+      $supported_language_pairs = $this->request('discover/language_pairs', 'GET', array(), TRUE);
+      $result = json_decode($supported_language_pairs, TRUE);
 
       // Build a mapping of source and target language pairs.
       foreach ($result['results'] as $language) {
@@ -296,6 +402,30 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   }
 
   /**
+   * Returns list of expertise options.
+   *
+   * @param JobInterface $job
+   *   Job object.
+   *
+   * @return array
+   *   List of expertise options, keyed by their code.
+   */
+  public function getExpertise(JobInterface $job) {
+    try {
+      $params['source_language'] = $job->getRemoteSourceLanguage();
+      $params['target_language'] = $job->getRemoteTargetLanguage();
+      $expertise_codes = $this->request('discover/expertise', 'GET', $params);
+      $structured_expertise_codes = array();
+      foreach ($expertise_codes as $expertise) {
+        $structured_expertise_codes[$expertise['code']] = $expertise['name'];
+      }
+      return $structured_expertise_codes;
+    } catch (TMGMTException $e) {
+      return array();
+    }
+  }
+
+  /**
    * {@inheritdoc}
    */
   public function checkAvailable(TranslatorInterface $translator) {
@@ -304,21 +434,318 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     }
     return AvailableResult::no(t('@translator is not available. Make sure it is properly <a href=:configured>configured</a>.', [
       '@translator' => $translator->label(),
-      ':configured' => $translator->url()
+      ':configured' => $translator->url(),
     ]));
   }
 
+  /**
+   * Returns quotation.
+   *
+   * @param JobInterface $job
+   *   The job to get quotation for.
+   *
+   * @return array
+   *   List of quotation value.
+   */
+  public function getQuotation(JobInterface $job) {
+    /** @var \Drupal\tmgmt_file\Format\FormatInterface $xliff_converter */
+    $xliff_converter = \Drupal::service('plugin.manager.tmgmt_file.format')->createInstance('xlf');
+
+    $word_count = $job->getWordCount();
+    $source_language = $job->getRemoteSourceLanguage();
+    $target_language = $job->getRemoteTargetLanguage();
+    $service = 'translation';
+    $expertise = $job->getSetting('expertise');
+    $name = "JobID_{$job->id()}_{$source_language}_{$target_language}";
+
+    try {
+      // @todo: Move to getResourceUuids().
+      $xliff = $xliff_converter->export($job, array());
+      $resource_uuids = $this->uploadFileResource($xliff, $name);
+
+      $params['resources'] = implode(',', $resource_uuids);
+      $params['word_count'] = $word_count;
+      $params['source_language'] = $source_language;
+      $params['target_language'] = $target_language;
+      $params['service'] = $service;
+      $params['expertise'] = $expertise;
+      //$params['proofreading'] = '';
+      //$params['currency'] = '';
+
+      return $this->request('tools/quote', 'GET', $params);
+    } catch (TMGMTException $e) {
+      return array();
+    }
+  }
 
   /**
-   * Gets OHT service connector.
+   * Returns the list of account details.
    *
-   * @param \Drupal\tmgmt\TranslatorInterface $translator
-   *   Current job translator.
-   *
-   * @return \Drupal\tmgmt_oht\OhtConnector
-   *   OHT connector instance.
+   * @return array
+   *   The list of account details.
    */
-  public function getConnector(TranslatorInterface $translator) {
-    return new OhtConnector($translator, $this->client);
+  public function getAccountDetails() {
+    try {
+      return $this->request('account');
+    } catch (TMGMTException $e) {
+      return array();
+    }
+  }
+
+  /**
+   * Creates a text resource at OHT.
+   *
+   * @param string $text
+   *   Text to be translated.
+   *
+   * @return array
+   *   OHT uuid of the resource.
+   */
+  public function uploadTextResource($text) {
+    $params['form_parms']['text'] = $text;
+    return $this->request('resources/text', 'POST', $params);
+  }
+
+  /**
+   * Downloads resource.
+   *
+   * @param string $oht_uuid
+   *
+   * @return array
+   *   Resource xml.
+   */
+  public function getResourceDownload($oht_uuid, $project_id = NULL) {
+    return $this->request('resources/' . $oht_uuid . '/download', 'GET', ($project_id) ? array('project_id' => $project_id) : array(), TRUE);
+  }
+
+  /**
+   * Creates new translation project at OHT.
+   *
+   * @param int $tjiid
+   *   Translation job item id.
+   * @param string $source_language
+   *   Source language.
+   * @param string $target_language
+   *   Target language.
+   * @param string $oht_uuid
+   *   OHT uuid.
+   * @param string $notes
+   *   Notes to be sent with the job.
+   * @param string $expertise
+   *   Expertise code.
+   * @param array $params
+   *   Additional params.
+   *
+   * @return array
+   *   OHT project data.
+   */
+  public function newTranslationProject($tjiid, $source_language, $target_language, $oht_uuid, $notes = NULL, $expertise = NULL, $params = array()) {
+    $params += [
+      'form_params' => [
+        'public_key' => $this->entity->getSetting('api_public_key'),
+        'secret_key' => $this->entity->getSetting('api_secret_key'),
+        'source_language' => $source_language,
+        'target_language' => $target_language,
+        'sources' => $oht_uuid,
+        'notes' => $notes,
+        'callback_url' => Url::fromRoute('tmgmt_oht.callback')->setAbsolute()->toString(),
+        'custom0' => $tjiid,
+        'custom1' => tmgmt_oht_hash($tjiid),
+      ],
+    ];
+    if (!empty($expertise)) {
+      $params['form_params']['expertise'] = $expertise;
+    }
+
+    return $this->request('projects/translation', 'POST', $params);
+  }
+
+  /**
+   * Gets OHT project data.
+   *
+   * @param int $project_id
+   *   OHT project id.
+   *
+   * @return array
+   *   Project info.
+   */
+  public function getProjectDetails($project_id) {
+    return $this->request('projects/' . $project_id);
+  }
+
+  /**
+   * Create new comment to project.
+   *
+   * @param int $project_id
+   * @param string $content (optional)
+   *
+   * @return array
+   *   Response.
+   */
+  public function addProjectComment($project_id, $content = '') {
+    $params['form_params']['content'] = $content;
+    return $this->request('projects/' . $project_id . '/comments', 'POST', $params);
+  }
+
+  /**
+   * Fetch comments by project id
+   *
+   * @param integer $project_id
+   *
+   * @return array
+   *   Project comments.
+   */
+  public function getProjectComments($project_id) {
+    return $this->request('projects/' . $project_id . '/comments', 'GET');
+  }
+
+  /**
+   * Gets wordcount.
+   *
+   * @param string $oht_uuid
+   *   OHT resource uuid.
+   *
+   * @return array
+   *   Wordcount info.
+   */
+  public function getWordcount($oht_uuid) {
+    $params['resources'] = $oht_uuid;
+    return $this->request('tools/wordcount', 'GET', $params);
+  }
+
+  /**
+   * Creates a file resource at OHT.
+   *
+   * @param string $xliff
+   *   .XLIFF string to be translated. It is send as a file.
+   * @param string $name
+   *   File name of the .XLIFF file.
+   *
+   * @return string
+   *   OHT uuid of the resource.
+   */
+  public function uploadFileResource($xliff, $name) {
+    $form_params = [
+      'multipart' => [
+        [
+          'name' => 'public_key',
+          'contents' => $this->entity->getSetting('api_public_key'),
+        ],
+        [
+          'name' => 'secret_key',
+          'contents' => $this->entity->getSetting('api_secret_key'),
+        ],
+        [
+          'name' => 'upload',
+          'contents' => $xliff,
+          'filename' => $name,
+          'headers' => [
+            'Content-Type' => 'text/plain',
+          ],
+        ],
+      ],
+    ];
+
+    return $this->request('resources/file', 'POST', $form_params);
+  }
+
+  /**
+   * Receives and stores a translation returned by OHT.
+   *
+   * @param array $resource_uuids
+   *   The list of resource uuids.
+   * @param \Drupal\tmgmt\Entity\JobItem $job_item
+   *   The job item to retrieve translation for.
+   * @param string $oht_project_id
+   *   (optional) The remote OHT project id.
+   */
+  public function retrieveTranslation(array $resource_uuids, JobItem $job_item, $oht_project_id = NULL) {
+    try {
+      foreach ($resource_uuids as $resource_uuid) {
+        $resource = $this->getResourceDownload($resource_uuid, $oht_project_id);
+        // On sandbox we get some non existing resource_uuids which do not
+        // really exist and return some forbidden error in json format. So we
+        // filter these out.
+        if (strpos($resource, '<?xml') !== FALSE) {
+          $data = $this->parseTranslationData($resource);
+          $job_item->getJob()->addTranslatedData($data);
+
+          //if ($job_item->isState(TMGMT_JOB_ITEM_STATE_ACTIVE)) {
+            $job_item->addMessage('The translation has been received.');
+          //}
+          //else {
+          //  $job_item->addMessage('The translation has been updated.');
+          //}
+        }
+        // @todo we should log errors here for the failing resources.
+      }
+    }
+    catch (TMGMTException $e) {
+      $job_item->addMessage('Could not get translation from OHT. Message error: @error',
+        array('@error' => $e->getMessage()), 'error');
+    }
+  }
+
+  /**
+   * Parses received translation from OHT and returns unflatted data.
+   *
+   * @param string $data
+   *   Base64 encode data, received from OHT.
+   *
+   * @return array
+   *   Unflatted data.
+   */
+  protected function parseTranslationData($data) {
+    /** @var \Drupal\tmgmt_file\Format\FormatInterface $xliff_converter */
+    $xliff_converter = \Drupal::service('plugin.manager.tmgmt_file.format')->createInstance('xlf');
+    // Import given data using XLIFF converter. Specify that passed content is
+    // not a file.
+    return $xliff_converter->import($data, FALSE);
+  }
+
+  /**
+   * Fetches translations for job items of a given job.
+   *
+   * @param Job $job
+   *   A job containing job items that translations will be fetched for.
+   *
+   * @return bool
+   *   Returns TRUE if there are error messages during the process of retrieving
+   *   translations. Otherwise FALSE.
+   */
+  public function fetchJobs(Job $job) {
+    // Search for placeholder item.
+    $remotes = RemoteMapping::loadByLocalData($job->id());
+
+    // Get job items of a given job.
+    $job_items = $job->getItems();
+    $error = FALSE;
+
+    try {
+      // Loop over job items and check for if there is a translation available.
+      /** @var \Drupal\tmgmt\Entity\RemoteMapping $remote */
+      foreach ($remotes as $remote) {
+        /** @var JobItem $job_item */
+        $job_item = $remote->getJobItem();
+        if (empty($remote->getRemoteIdentifier1())) {
+          $error = TRUE;
+          $job_item->addMessage('Could not retrieve project information.', array(), 'error');
+          continue;
+        }
+        $project_details = $this->getProjectDetails($remote->getRemoteIdentifier1());
+        if (isset($project_details['resources']['translations'])) {
+          $this->retrieveTranslation($project_details['resources']['translations'], $job_item, $project_details['project_id']);
+        }
+        else {
+          $error = TRUE;
+          $job_item->addMessage('Could not retrieve translation resources.', array(), 'error');
+        }
+      }
+    } catch (TMGMTException $e) {
+      $job->addMessage('Could not pull translation resources.', array(), 'error');
+      return TRUE;
+    }
+
+    return $error;
   }
 }

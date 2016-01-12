@@ -6,35 +6,48 @@
 namespace Drupal\tmgmt_oht\Controller;
 
 use Drupal\Core\Controller\ControllerBase;
+use Drupal\tmgmt\Entity\JobItem;
+use Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Route controller class for the tmgmt_oht module.
  */
 class OhtController extends ControllerBase {
 
+  /**
+   *
+   *
+   * @param \Symfony\Component\HttpFoundation\Request $request
+   *
+   * @return \Symfony\Component\HttpFoundation\Response
+   */
   public function callback(Request $request) {
     // If translation submitted - handle it.
-    if ($_POST['event'] == 'project.resources.new' && $_POST['resource_type'] == 'translation') {
-      /**
-     * @var TMGMTJobItem $job_item The job object.
-     */
-    if ($_POST['custom1'] == tmgmt_oht_hash($_POST['custom0']) && $job_item = tmgmt_job_item_load($_POST['custom0'])) {
+    $event = past_event_create('oht', 'item', 'Request var_dump', [
+      'request' => $request,
+    ])->save();
+    if ($request->request->get('event') == 'project.resources.new' && $request->request->get('resource_type') == 'translation') {
+      /** @var JobItem $job_item */
+      if ($request->request->get('custom1') == tmgmt_oht_hash($request->request->get('custom0'))) {
+        // && $job_item = tmgmt_job_item_load($_POST['custom0'])) {
+        $job_item = JobItem::load($request->request->get('custom0'));
+        //$job_item = NULL;
 
-        /**
-         * @var TMGMTOhtPluginController $oht The translator object.
-         */
-        $oht = $job_item->getTranslator()->getController();
-        $oht->retrieveTranslation([$_POST['resource_uuid']], $job_item, $_POST['project_id']);
+        /** @var OhtTranslator $oht */
+        $oht = $job_item->getTranslator()->getPlugin();
+        $oht->setEntity($job_item->getTranslator());
+        $oht->retrieveTranslation([$request->request->get('resource_uuid')], $job_item, $request->request->get('project_id'));
       }
       else {
         \Drupal::logger('tmgmt_oht')->warning('Wrong call for submitting translation for job item %id', [
-          '%id' => $job_item->tjiid
-          ]);
+          '%id' => 'id',
+        ]);
       }
     }
 
-//    drupal_exit();
+    return new Response();
   }
 
 }

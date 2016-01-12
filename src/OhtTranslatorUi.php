@@ -8,16 +8,10 @@
 namespace Drupal\tmgmt_oht;
 
 use Drupal;
-use Drupal\Core\Url;
 use Drupal\tmgmt\TranslatorPluginUiBase;
-use Drupal\tmgmt\Entity\Job;
-use Drupal\tmgmt\Entity\Translator;
-use Drupal\tmgmt\TMGMTException;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\tmgmt\JobItemInterface;
-use Drupal\tmgmt\TranslatorInterface;
 use Drupal\tmgmt\JobInterface;
-use Drupal\tmgmt\RemoteMappingInterface;
 
 /**
  * @file
@@ -29,13 +23,14 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
    * {@inheritdoc}
    */
   public function reviewForm(array $form, FormStateInterface $form_state, JobItemInterface $item) {
-    /** @var OhtConnector $controller The connector. */
-    $connector = new OhtConnector($item->getTranslator(), Drupal::httpClient());
+    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $oht */
+    $oht = $item->getTranslator()->getPlugin();
+    $oht->setEntity($item->getTranslator());
     $mappings = $item->getRemoteMappings();
-    /* @var TMGMTRemote $mapping */
+    /** @var Drupal\tmgmt\Entity\RemoteMapping $mapping */
     $mapping = array_shift($mappings);
 
-    $comments = $connector->getProjectComments($mapping->remote_identifier_1);
+    $comments = $oht->getProjectComments($mapping->getRemoteIdentifier1());
     $rows = array();
     $new_comment_link = '';
 
@@ -57,8 +52,12 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
       $new_comment_link = '<a href="#new-comment">' . t('Add new comment') . '</a>';
     }
 
-    $form['#attached']['css'][] = drupal_get_path('module', 'tmgmt_oht') . '/css/tmgmt_oht_comments.css';
-    $form['#attached']['js'][] = drupal_get_path('module', 'tmgmt_oht') . '/js/tmgmt_oht_comments.js';
+    $form['#attached'] = array(
+      'library' => array('tmgmt_oht/comments'),
+    );
+
+    //$form['#attached']['css'][] = drupal_get_path('module', 'tmgmt_oht') . '/css/tmgmt_oht_comments.css';
+    //$form['#attached']['js'][] = drupal_get_path('module', 'tmgmt_oht') . '/js/tmgmt_oht_comments.js';
 
     $form['oht_comments'] = array(
       '#type' => 'fieldset',
@@ -83,7 +82,7 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
     );
     $form['oht_comments']['container']['comment_submitted'] = array(
       '#type' => 'hidden',
-      '#value' => isset($form_state['comment_submitted']) ? $form_state['comment_submitted'] : 0,
+      '#value' => $form_state->has('comment_submitted') ? $form_state->get('comment_submitted') : 0,
     );
     $form['oht_comments']['add_comment'] = array(
       '#type' => 'submit',
@@ -133,52 +132,54 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
    * {@inheritdoc}
    */
   public function checkoutSettingsForm(array $form, FormStateInterface $form_state, JobInterface $job) {
-    $translator = $job->getTranslator();
-    /** @var OhtConnector $controller The connector. */
-    $controller = new OhtConnector($translator, Drupal::httpClient());
+    /** @var \Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator */
+    $translator = $job->getTranslator()->getPlugin();
+    $translator->setEntity($job->getTranslator());
 
     $settings['expertise'] = array(
       '#type' => 'select',
       '#title' => t('Expertise'),
       '#description' => t('Select an expertise to identify the area of the text you will request to translate.'),
       '#empty_option' => ' - ',
-      '#options' => $controller->getExpertise($translator, $job->source_language, $job->target_language),
-      '#default_value' => isset($job->settings['expertise']) ? $job->settings['expertise'] : '',
+      '#options' => $translator->getExpertise($job),
+      '#default_value' => $job->getSetting('expertise') ? $job->getSetting('expertise') : '',
     );
     $settings['notes'] = array(
       '#type' => 'textarea',
       '#title' => t('Instructions'),
       '#description' => t('You can provide a set of instructions so that the translator will better understand your requirements.'),
-      '#default_value' => isset($job->settings['notes']) ? $job->settings['notes'] : '',
+      '#default_value' => $job->getSetting('notes') ? $job->getSetting('notes') : '',
     );
-    $price_quote = $controller->getQuotation($job);
-    $currency = $price_quote['currency'] == 'EUR' ? '€' : $price_quote['currency'];
-    $total = $price_quote['total'];
-    $settings['price_quote'] = array(
-      '#type' => 'item',
-      '#title' => t('Price quote'),
-      '#markup' => t('<strong>@word_count</strong> words, <strong>@credits</strong> credits/<strong>@total_price@currency</strong>.', [
-        '@word_count' => $total['wordcount'],
-        '@net_price' => $total['net_price'],
-        '@transaction_fee' => $total['transaction_fee'],
-        '@total_price' => $total['price'],
-        '@credits' => $total['credits'],
-        '@currency' => $currency,
-      ]),
-    );
-    $account_details = $controller->getAccountDetails($translator);
-    $settings['account_balance'] = array(
-      '#type' => 'item',
-      '#title' => t('Account balance'),
-      '#markup' => t('<strong>@credits</strong> credits', array('@credits' => $account_details['credits'])),
-    );
-
-    if ($account_details['credits'] < $total['price']) {
-      $settings['low_account_balance'] = array(
+    if ($price_quote = $translator->getQuotation($job)) {
+      $currency = $price_quote['currency'] == 'EUR' ? '€' : $price_quote['currency'];
+      $total = $price_quote['total'];
+      $settings['price_quote'] = array(
         '#type' => 'item',
+        '#title' => t('Price quote'),
+        '#markup' => t('<strong>@word_count</strong> words, <strong>@credits</strong> credits/<strong>@total_price@currency</strong>.', [
+          '@word_count' => $total['wordcount'],
+          '@net_price' => $total['net_price'],
+          '@transaction_fee' => $total['transaction_fee'],
+          '@total_price' => $total['price'],
+          '@credits' => $total['credits'],
+          '@currency' => $currency,
+        ]),
+      );
+    }
+    if ($account_details = $translator->getAccountDetails()) {
+      $settings['account_balance'] = array(
+        '#type' => 'item',
+        '#title' => t('Account balance'),
+        '#markup' => t('<strong>@credits</strong> credits', array('@credits' => $account_details['credits'])),
+      );
+    }
+    if (isset($account_details['credits']) && isset($total['price']) && $account_details['credits'] < $total['price']) {
+      $settings['low_account_balance'] = array(
+        '#type' => 'container',
         '#markup' => t('Your account balance is lower than quoted price and the translation will not be successful.'),
-        '#prefix' => '<div class="messages warning">',
-        '#suffix' => '</div>',
+        '#attributes' => array(
+          'class' => array('messages messages--warning'),
+        ),
       );
     }
 
@@ -190,6 +191,15 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
    */
   public function checkoutInfo(JobInterface $job) {
     $form = array();
+
+    if ($job->isActive()) {
+      $form['actions']['pull'] = array(
+        '#type' => 'submit',
+        '#value' => t('Pull translations'),
+        '#submit' => array('_tmgmt_oht_pull_submit'),
+        '#weight' => -10,
+      );
+    }
 
     return $form;
   }

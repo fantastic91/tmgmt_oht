@@ -22,14 +22,14 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
    * {@inheritdoc}
    */
   public function reviewForm(array $form, FormStateInterface $form_state, JobItemInterface $item) {
-    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $oht */
-    $oht = $item->getTranslator()->getPlugin();
-    $oht->setEntity($item->getTranslator());
+    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator_plugin */
+    $translator_plugin = $item->getTranslator()->getPlugin();
+    $translator_plugin->setTranslator($item->getTranslator());
     $mappings = $item->getRemoteMappings();
     /** @var Drupal\tmgmt\Entity\RemoteMapping $mapping */
     $mapping = array_shift($mappings);
 
-    $comments = $oht->getProjectComments($mapping->getRemoteIdentifier1());
+    $comments = $translator_plugin->getProjectComments($mapping->getRemoteIdentifier1());
     $rows = array();
     $new_comment_link = '';
 
@@ -57,7 +57,7 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
       '#collapsible' => TRUE,
     );
     $form['oht_comments']['container'] = array(
-      '#prefix' => '<div id="tmgmt-oht-comments-wrapper">',
+      '#prefix' => '<div id="tmgmt-translator_plugin-comments-wrapper">',
       '#suffix' => '</div>',
     );
     $form['oht_comments']['container']['comments'] = array(
@@ -83,7 +83,7 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
       '#validate' => array(array($this, 'validateComment')),
       '#ajax' => array(
         'callback' => array($this, 'updateReviewForm'),
-        'wrapper' => 'tmgmt-oht-comments-wrapper',
+        'wrapper' => 'tmgmt-translator_plugin-comments-wrapper',
       ),
     );
 
@@ -106,15 +106,15 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
     /* @var JobItemInterface $job_item */
     $job_item = $form_state->getFormObject()->getEntity();
 
-    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator */
-    $translator = $job_item->getTranslator()->getPlugin();
-    $translator->setEntity($job_item->getTranslator());
+    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator_plugin */
+    $translator_plugin = $job_item->getTranslator()->getPlugin();
+    $translator_plugin->setTranslator($job_item->getTranslator());
     $mappings = $job_item->getRemoteMappings();
 
     try {
       /* @var Drupal\tmgmt\Entity\RemoteMapping $mapping */
       $mapping = array_shift($mappings);
-      $translator->addProjectComment($mapping->getRemoteIdentifier1(), $form_state->getValue('comment'));
+      $translator_plugin->addProjectComment($mapping->getRemoteIdentifier1(), $form_state->getValue('comment'));
       $form_state->set('comment_submitted', 1);
       $form_state->setRebuild();
     }
@@ -155,14 +155,6 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
   }
 
   /**
-   * {@inheritdoc}
-   */
-  public function validateConfigurationForm(array &$form, FormStateInterface $form_state) {
-    parent::validateConfigurationForm($form, $form_state);
-    // @todo: Implement validation.
-  }
-
-  /**
    * Ajax callback for the OHT comment form.
    *
    * @param array $form
@@ -181,16 +173,16 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
    * {@inheritdoc}
    */
   public function checkoutSettingsForm(array $form, FormStateInterface $form_state, JobInterface $job) {
-    /** @var \Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator */
-    $translator = $job->getTranslator()->getPlugin();
-    $translator->setEntity($job->getTranslator());
+    /** @var \Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator_plugin */
+    $translator_plugin = $job->getTranslator()->getPlugin();
+    $translator_plugin->setTranslator($job->getTranslator());
 
     $settings['expertise'] = array(
       '#type' => 'select',
       '#title' => t('Expertise'),
       '#description' => t('Select an expertise to identify the area of the text you will request to translate.'),
       '#empty_option' => ' - ',
-      '#options' => $translator->getExpertise($job),
+      '#options' => $translator_plugin->getExpertise($job),
       '#default_value' => $job->getSetting('expertise') ? $job->getSetting('expertise') : '',
     );
     $settings['notes'] = array(
@@ -199,7 +191,7 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
       '#description' => t('You can provide a set of instructions so that the translator will better understand your requirements.'),
       '#default_value' => $job->getSetting('notes') ? $job->getSetting('notes') : '',
     );
-    if ($price_quote = $translator->getQuotation($job)) {
+    if ($price_quote = $translator_plugin->getQuotation($job)) {
       $currency = $price_quote['currency'] == 'EUR' ? '€' : $price_quote['currency'];
       $total = $price_quote['total'];
       $settings['price_quote'] = array(
@@ -215,7 +207,7 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
         ]),
       );
     }
-    if ($account_details = $translator->getAccountDetails()) {
+    if ($account_details = $translator_plugin->getAccountDetails()) {
       $settings['account_balance'] = array(
         '#type' => 'item',
         '#title' => t('Account balance'),
@@ -259,10 +251,10 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
   public function submitPullTranslations(array $form, FormStateInterface $form_state) {
     /** @var Drupal\tmgmt\Entity\Job $job */
     $job = $form_state->getFormObject()->getEntity();
-    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator */
-    $translator = $job->getTranslator()->getPlugin();
+    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator_plugin */
+    $translator_plugin = $job->getTranslator()->getPlugin();
 
-    if (!$error_messages = $translator->fetchJobs($job)) {
+    if (!$error_messages = $translator_plugin->fetchJobs($job)) {
       drupal_set_message(t('All available translations from OneHourTranslation have been pulled.'));
     }
     else {

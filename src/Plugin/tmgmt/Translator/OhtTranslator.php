@@ -52,20 +52,20 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   const API_VERSION = '2';
 
   /**
-   * The translator entity.
+   * The translator.
    *
    * @var TranslatorInterface
    */
-  private $entity;
+  private $translator;
 
   /**
-   * Sets a Translator entity.
+   * Sets a Translator.
    *
    * @param \Drupal\tmgmt\TranslatorInterface $translator
    */
-  public function setEntity(TranslatorInterface $translator) {
-    if (!isset($this->entity)) {
-      $this->entity = $translator;
+  public function setTranslator(TranslatorInterface $translator) {
+    if (!isset($this->translator)) {
+      $this->translator = $translator;
     }
   }
 
@@ -77,23 +77,6 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
    * @var bool
    */
   private $debug = FALSE;
-
-  /**
-   * {@inheritdoc}
-   */
-  protected $escapeStart = '[[[';
-
-  /**
-   * {@inheritdoc}
-   */
-  protected $escapeEnd = ']]]';
-
-  /**
-   * If set it will be sent by job post action as a comment.
-   *
-   * @var string
-   */
-  protected $serviceComment;
 
   /**
    * Guzzle HTTP client.
@@ -222,7 +205,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   public function requestTranslation(JobInterface $job) {
     /** @var \Drupal\tmgmt_file\Format\FormatInterface $xliff_converter */
     $xliff_converter = \Drupal::service('plugin.manager.tmgmt_file.format')->createInstance('xlf');
-    $this->setEntity($job->getTranslator());
+    $this->setTranslator($job->getTranslator());
 
     /** @var JobItem $job_item */
     $job_item = NULL;
@@ -284,12 +267,12 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
    */
   protected function request($path, $method = 'GET', $params = array(), $download = FALSE, $content_type = 'application/x-www-form-urlencoded') {
     $options = array();
-    if (!$this->entity) {
+    if (!$this->translator) {
       throw new TMGMTException('There is no Translation entity. Access to public/secret keys is not possible.');
     }
 
 
-    if ($this->entity->getSetting('use_sandbox')) {
+    if ($this->translator->getSetting('use_sandbox')) {
       $url = self::SANDBOX_URL . '/' . self::API_VERSION . '/' . $path;
     }
     else {
@@ -300,8 +283,8 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
       if ($method == 'GET') {
         // Add query parameters into options.
         $params += [
-          'public_key' => $this->entity->getSetting('api_public_key'),
-          'secret_key' => $this->entity->getSetting('api_secret_key'),
+          'public_key' => $this->translator->getSetting('api_public_key'),
+          'secret_key' => $this->translator->getSetting('api_secret_key'),
         ];
         $options['query'] = $params;
       }
@@ -385,7 +368,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     }
 
     try {
-      $this->setEntity($translator);
+      $this->setTranslator($translator);
       $supported_languages = $this->request('discover/languages', 'GET', array(), TRUE);
       $result = json_decode($supported_languages, TRUE);
 
@@ -408,7 +391,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     $language_pairs = array();
 
     try {
-      $this->setEntity($translator);
+      $this->setTranslator($translator);
       $supported_language_pairs = $this->request('discover/language_pairs', 'GET', array(), TRUE);
       $result = json_decode($supported_language_pairs, TRUE);
 
@@ -566,8 +549,8 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   public function newTranslationProject($tjiid, $source_language, $target_language, $oht_uuid, $notes = NULL, $expertise = NULL, $params = array()) {
     $params += [
       'form_params' => [
-        'public_key' => $this->entity->getSetting('api_public_key'),
-        'secret_key' => $this->entity->getSetting('api_secret_key'),
+        'public_key' => $this->translator->getSetting('api_public_key'),
+        'secret_key' => $this->translator->getSetting('api_secret_key'),
         'source_language' => $source_language,
         'target_language' => $target_language,
         'sources' => $oht_uuid,
@@ -609,8 +592,8 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   public function addProjectComment($project_id, $content = '') {
     $params = [
       'form_params' => [
-        'public_key' => $this->entity->getSetting('api_public_key'),
-        'secret_key' => $this->entity->getSetting('api_secret_key'),
+        'public_key' => $this->translator->getSetting('api_public_key'),
+        'secret_key' => $this->translator->getSetting('api_secret_key'),
         'content' => $content,
       ],
     ];
@@ -660,11 +643,11 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
       'multipart' => [
         [
           'name' => 'public_key',
-          'contents' => $this->entity->getSetting('api_public_key'),
+          'contents' => $this->translator->getSetting('api_public_key'),
         ],
         [
           'name' => 'secret_key',
-          'contents' => $this->entity->getSetting('api_secret_key'),
+          'contents' => $this->translator->getSetting('api_secret_key'),
         ],
         [
           'name' => 'upload',
@@ -747,7 +730,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   public function fetchJobs(Job $job) {
     // Search for placeholder item.
     $remotes = RemoteMapping::loadByLocalData($job->id());
-    $this->setEntity($job->getTranslator());
+    $this->setTranslator($job->getTranslator());
     $error = FALSE;
 
     try {

@@ -31,15 +31,15 @@ class OhtController extends ControllerBase {
     if ($request->get('event') == 'project.resources.new' && $request->get('resource_type') == 'translation') {
       $job_item_id = $request->get('custom0');
       if ($request->get('custom1') == OhtTranslator::hash($job_item_id)) {
-        /** @var JobItemInterface $job_item */
+        /** @var JobItem $job_item */
         if (!$job_item = JobItem::load($job_item_id)) {
           throw new NotFoundHttpException;
         }
 
-        /** @var OhtTranslator $oht */
-        $oht = $job_item->getTranslator()->getPlugin();
-        $oht->setEntity($job_item->getTranslator());
-        $oht->retrieveTranslation([$request->get('resource_uuid')], $job_item, $request->get('project_id'));
+        /** @var OhtTranslator $translator_plugin */
+        $translator_plugin = $job_item->getTranslator()->getPlugin();
+        $translator_plugin->setTranslator($job_item->getTranslator());
+        $translator_plugin->retrieveTranslation([$request->get('resource_uuid')], $job_item, $request->get('project_id'));
       }
       else {
         \Drupal::logger('tmgmt_oht')->warning('Wrong call for submitting translation for job item %id', ['%id' => $job_item_id,]);

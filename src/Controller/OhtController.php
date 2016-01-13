@@ -7,9 +7,11 @@ namespace Drupal\tmgmt_oht\Controller;
 
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\tmgmt\Entity\JobItem;
+use Drupal\tmgmt\JobItemInterface;
 use Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Route controller class for the tmgmt_oht module.
@@ -17,38 +19,33 @@ use Symfony\Component\HttpFoundation\Response;
 class OhtController extends ControllerBase {
 
   /**
-   *
+   * Provides a callback function for Oht translator.
    *
    * @param \Symfony\Component\HttpFoundation\Request $request
+   *   The request to handle.
    *
    * @return \Symfony\Component\HttpFoundation\Response
+   *   The response to return.
    */
   public function callback(Request $request) {
-    // If translation submitted - handle it.
-    $event = past_event_create('oht', 'item', 'Request var_dump');
-    $event->addArgument('request', $request);
-    $event->save();
-
-    if ($request->request->get('event') == 'project.resources.new' && $request->request->get('resource_type') == 'translation') {
-      /** @var JobItem $job_item */
-      if ($request->request->get('custom1') == tmgmt_oht_hash($request->request->get('custom0'))) {
-        // && $job_item = tmgmt_job_item_load($_POST['custom0'])) {
-        $job_item = JobItem::load($request->request->get('custom0'));
-        //$job_item = NULL;
+    if ($request->get('event') == 'project.resources.new' && $request->get('resource_type') == 'translation') {
+      $job_item_id = $request->get('custom0');
+      if ($request->get('custom1') == tmgmt_oht_hash($job_item_id)) {
+        /** @var JobItemInterface $job_item */
+        if (!$job_item = JobItem::load($job_item_id)) {
+          throw new NotFoundHttpException;
+        }
 
         /** @var OhtTranslator $oht */
         $oht = $job_item->getTranslator()->getPlugin();
         $oht->setEntity($job_item->getTranslator());
-        $oht->retrieveTranslation([$request->request->get('resource_uuid')], $job_item, $request->request->get('project_id'));
+        $oht->retrieveTranslation([$request->get('resource_uuid')], $job_item, $request->get('project_id'));
       }
       else {
-        \Drupal::logger('tmgmt_oht')->warning('Wrong call for submitting translation for job item %id', [
-          '%id' => 'id',
-        ]);
+        \Drupal::logger('tmgmt_oht')->warning('Wrong call for submitting translation for job item %id', ['%id' => $job_item_id,]);
+        throw new NotFoundHttpException;
       }
     }
-
     return new Response();
   }
-
 }

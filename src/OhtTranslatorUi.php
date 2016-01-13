@@ -14,8 +14,7 @@ use Drupal\tmgmt\JobItemInterface;
 use Drupal\tmgmt\JobInterface;
 
 /**
- * @file
- * Provides OHT translation plugin controller.
+ * Oht translator UI.
  */
 class OhtTranslatorUi extends TranslatorPluginUiBase {
 

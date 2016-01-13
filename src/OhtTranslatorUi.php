@@ -136,13 +136,13 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
       '#type' => 'textfield',
       '#title' => t('OHT API Public Key'),
       '#default_value' => $translator->getSetting('api_public_key'),
-      '#description' => t('Please enter your public API key for OneHourTranslation service.'),
+      '#description' => t('Please enter your public API key or visit <a href="@url">OneHourTranslation</a> service to get one.', ['@url' => 'https://www.onehourtranslation.com/profile/apiKeys']),
     );
     $form['api_secret_key'] = array(
       '#type' => 'textfield',
       '#title' => t('OHT API Secret key'),
       '#default_value' => $translator->getSetting('api_secret_key'),
-      '#description' => t('Please enter your secret API key for OneHourTranslation service.'),
+      '#description' => t('Please enter your secret API key or visit <a href="@url">OneHourTranslation</a> service to get one.', ['@url' => 'https://www.onehourtranslation.com/profile/apiKeys']),
     );
     $form['use_sandbox'] = array(
       '#type' => 'checkbox',

@@ -41,24 +41,17 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
             'data' => t('By %name (%role) at %time', array(
               '%name' => $comment['commenter_name'],
               '%role' => $comment['commenter_role'],
-              '%time' => format_date(strtotime($comment['date']))
+              '%time' => \Drupal::service('date.formatter')->format(strtotime($comment['date'])),
             )),
             'class' => 'meta',
           ),
-          Drupal\Component\Utility\Html::escape($comment['comment_content']),
+          $comment['comment_content'],
         );
       }
 
       $new_comment_link = '<a href="#new-comment">' . t('Add new comment') . '</a>';
     }
-
-    $form['#attached'] = array(
-      'library' => array('tmgmt_oht/comments'),
-    );
-
-    //$form['#attached']['css'][] = drupal_get_path('module', 'tmgmt_oht') . '/css/tmgmt_oht_comments.css';
-    //$form['#attached']['js'][] = drupal_get_path('module', 'tmgmt_oht') . '/js/tmgmt_oht_comments.js';
-
+    $form['#attached'] = array('library' => array('tmgmt_oht/comments'));
     $form['oht_comments'] = array(
       '#type' => 'fieldset',
       '#title' => t('OHT Comments'),
@@ -87,14 +80,48 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
     $form['oht_comments']['add_comment'] = array(
       '#type' => 'submit',
       '#value' => t('Add new comment'),
-      '#submit' => array('tmgmt_oht_add_comment_form_submit'),
+      '#submit' => array(array($this, 'submitAddComment')),
+      '#validate' => array(array($this, 'validateComment')),
       '#ajax' => array(
-        'callback' => 'tmgmt_oht_review_form_ajax',
+        'callback' => array($this, 'updateReviewForm'),
         'wrapper' => 'tmgmt-oht-comments-wrapper',
       ),
     );
 
     return $form;
+  }
+
+  /**
+   * Validates submitted OHT comment.
+   */
+  public function validateComment($form, FormStateInterface $form_state) {
+    if (empty($form_state->getValue('comment'))) {
+      $form_state->setErrorByName('comment', t('The submitted comment cannot be empty.'));
+    }
+  }
+
+  /**
+   * Submit callback to add new comment to an OHT project.
+   */
+  public function submitAddComment(array $form, FormStateInterface $form_state) {
+    /* @var JobItemInterface $job_item */
+    $job_item = $form_state->getFormObject()->getEntity();
+
+    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator */
+    $translator = $job_item->getTranslator()->getPlugin();
+    $translator->setEntity($job_item->getTranslator());
+    $mappings = $job_item->getRemoteMappings();
+
+    try {
+      /* @var Drupal\tmgmt\Entity\RemoteMapping $mapping */
+      $mapping = array_shift($mappings);
+      $translator->addProjectComment($mapping->getRemoteIdentifier1(), $form_state->getValue('comment'));
+      $form_state->set('comment_submitted', 1);
+      $form_state->setRebuild();
+    }
+    catch (Drupal\tmgmt\TMGMTException $e) {
+      drupal_set_message($e->getMessage(), 'error');
+    }
   }
 
   /**
@@ -126,6 +153,29 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
     );
 
     return $form;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function validateConfigurationForm(array &$form, FormStateInterface $form_state) {
+    parent::validateConfigurationForm($form, $form_state);
+    // @todo: Implement validation.
+  }
+
+  /**
+   * Ajax callback for the OHT comment form.
+   *
+   * @param array $form
+   *   The form structure.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state.
+   *
+   * @return array
+   *   OHT comments container.
+   */
+  public function updateReviewForm(array $form, FormStateInterface $form_state) {
+    return $form['oht_comments']['container'];
   }
 
   /**
@@ -196,12 +246,29 @@ class OhtTranslatorUi extends TranslatorPluginUiBase {
       $form['actions']['pull'] = array(
         '#type' => 'submit',
         '#value' => t('Pull translations'),
-        '#submit' => array('_tmgmt_oht_pull_submit'),
+        '#submit' => array(array($this, 'submitPullTranslations')),
         '#weight' => -10,
       );
     }
 
     return $form;
+  }
+
+  /**
+   * Submit callback to pull translations form OHT.
+   */
+  public function submitPullTranslations(array $form, FormStateInterface $form_state) {
+    /** @var Drupal\tmgmt\Entity\Job $job */
+    $job = $form_state->getFormObject()->getEntity();
+    /** @var Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator $translator */
+    $translator = $job->getTranslator()->getPlugin();
+
+    if (!$error_messages = $translator->fetchJobs($job)) {
+      drupal_set_message(t('All available translations from OneHourTranslation have been pulled.'));
+    }
+    else {
+      drupal_set_message(t('An error occurred during the pulling translations.'), 'error');
+    }
   }
 
 }

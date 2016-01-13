@@ -5,84 +5,11 @@
  * Module file of the translation management OHT module.
  */
 
-use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Site\Settings;
-use Drupal\tmgmt\Entity\Job;
-use Drupal\tmgmt_oht\Plugin\tmgmt\Translator\OhtTranslator;
-
-define('TMGMT_OHT_COMMENTS_CACHE_EXPIRE', 900);
 
 /**
  * Create secret hash for OHT reference.
  */
 function tmgmt_oht_hash($id) {
   return md5(Settings::getHashSalt() . $id);
-}
-
-/**
- * Submit callback to pull translations form OHT.
- */
-function _tmgmt_oht_pull_submit($form, FormStateInterface $form_state) {
-  /** @var Job $job */
-  $job = $form_state->getFormObject()->getEntity();
-  /** @var OhtTranslator $translator */
-  $translator = $job->getTranslator()->getPlugin();
-  $translator->setEntity($job->getTranslator());
-
-  if (!$error_messages = $translator->fetchJobs($job)) {
-    drupal_set_message(t('All available translations from OneHourTranslation have been pulled.'));
-  }
-  else {
-    drupal_set_message(t('An error occurred during the pulling translations.'), 'error');
-  }
-}
-
-/**
- * Ajax callback for the OHT comment form.
- */
-function tmgmt_oht_review_form_ajax($form, &$form_state) {
-  return $form['oht_comments']['container'];
-}
-
-/**
- * Submit callback to add new comment to an OHT project.
- */
-function tmgmt_oht_add_comment_form_submit($form, FormStateInterface $form_state) {
-  $form_state->setRebuild();
-  $form_state->set('oht_action', NULL);
-  $form_state->set('active_oht_job_id', NULL);
-  $oht_job_id = $form_state->getTriggeringElement()["#oht_job_id"];
-  /* @var JobItem $item */
-  $item = $form_state->getFormObject()->getEntity();
-  $job = $item->getJob();
-
-  try {
-    // @todo: call postComment()
-    $form_state->set('submitted_oht_action', 'comment');
-  }
-  catch (\Exception $e) {
-    watchdog_exception('tmgmt_oht', $e);
-    drupal_set_message(t('Unable to add comment. Error: @error', array('@error' => $e->getMessage())), 'error');
-  }
-
-  //$form_state['rebuild'] = TRUE;
-  //
-  ///* @var TMGMTJobItem $job_item */
-  //$job_item = $form_state['item'];
-  ///* @var TMGMTOhtPluginController $controller */
-  //$controller = $job_item->getTranslatorController();
-  //$connector = $controller->getConnector($job_item->getTranslator());
-  //
-  //$mappings = $job_item->getRemoteMappings();
-  //
-  //try {
-  //  /* @var TMGMTRemote $mapping */
-  //  $mapping = array_shift($mappings);
-  //  $connector->addProjectComment($mapping->remote_identifier_1, $form_state['values']['comment']);
-  //}
-  //catch (TMGMTOHTException $e) {
-  //  drupal_set_message(check_plain($e->getMessage()), 'error');
-  //}
-  //
-  //$form_state['comment_submitted'] = 1;
 }

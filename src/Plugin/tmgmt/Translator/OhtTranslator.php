@@ -283,6 +283,11 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
    */
   protected function request($path, $method = 'GET', $params = array(), $download = FALSE, $content_type = 'application/x-www-form-urlencoded') {
     $options = array();
+    if (!$this->entity) {
+      throw new TMGMTException('There is no Translation entity. Access to public/secret keys is not possible.');
+    }
+
+
     if ($this->entity->getSetting('use_sandbox')) {
       $url = self::SANDBOX_URL . '/' . self::API_VERSION . '/' . $path;
     }
@@ -363,6 +368,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     }
 
     try {
+      $this->setEntity($translator);
       $supported_languages = $this->request('discover/languages', 'GET', array(), TRUE);
       $result = json_decode($supported_languages, TRUE);
 
@@ -385,6 +391,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     $language_pairs = array();
 
     try {
+      $this->setEntity($translator);
       $supported_language_pairs = $this->request('discover/language_pairs', 'GET', array(), TRUE);
       $result = json_decode($supported_language_pairs, TRUE);
 
@@ -583,7 +590,14 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
    *   Response.
    */
   public function addProjectComment($project_id, $content = '') {
-    $params['form_params']['content'] = $content;
+    $params = [
+      'form_params' => [
+        'public_key' => $this->entity->getSetting('api_public_key'),
+        'secret_key' => $this->entity->getSetting('api_secret_key'),
+        'content' => $content,
+      ],
+    ];
+
     return $this->request('projects/' . $project_id . '/comments', 'POST', $params);
   }
 
@@ -670,12 +684,12 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
           $data = $this->parseTranslationData($resource);
           $job_item->getJob()->addTranslatedData($data);
 
-          //if ($job_item->isState(TMGMT_JOB_ITEM_STATE_ACTIVE)) {
+          if ($job_item->isState(Job::STATE_ACTIVE)) {
             $job_item->addMessage('The translation has been received.');
-          //}
-          //else {
-          //  $job_item->addMessage('The translation has been updated.');
-          //}
+          }
+          else {
+            $job_item->addMessage('The translation has been updated.');
+          }
         }
         // @todo we should log errors here for the failing resources.
       }
@@ -716,9 +730,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   public function fetchJobs(Job $job) {
     // Search for placeholder item.
     $remotes = RemoteMapping::loadByLocalData($job->id());
-
-    // Get job items of a given job.
-    $job_items = $job->getItems();
+    $this->setEntity($job->getTranslator());
     $error = FALSE;
 
     try {

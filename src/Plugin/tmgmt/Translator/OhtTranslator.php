@@ -8,6 +8,7 @@
 namespace Drupal\tmgmt_oht\Plugin\tmgmt\Translator;
 
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Drupal\Core\Site\Settings;
 use Drupal\Core\Url;
 use Drupal\tmgmt\Entity\Job;
 use Drupal\tmgmt\Entity\RemoteMapping;
@@ -557,7 +558,7 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
         'notes' => $notes,
         'callback_url' => Url::fromRoute('tmgmt_oht.callback')->setAbsolute()->toString(),
         'custom0' => $tjiid,
-        'custom1' => tmgmt_oht_hash($tjiid),
+        'custom1' => OhtTranslator::hash($tjiid),
       ],
     ];
     if (!empty($expertise)) {
@@ -759,5 +760,18 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
     }
 
     return $error;
+  }
+
+  /**
+   * Creates a secret hash for Oht reference.
+   *
+   * @param string $id
+   *   The id to hash.
+   *
+   * @return string
+   *   Returns hashed string.
+   */
+  public static function hash($id) {
+    return md5(Settings::getHashSalt() . $id);
   }
 }

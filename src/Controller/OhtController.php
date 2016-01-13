@@ -30,7 +30,7 @@ class OhtController extends ControllerBase {
   public function callback(Request $request) {
     if ($request->get('event') == 'project.resources.new' && $request->get('resource_type') == 'translation') {
       $job_item_id = $request->get('custom0');
-      if ($request->get('custom1') == tmgmt_oht_hash($job_item_id)) {
+      if ($request->get('custom1') == OhtTranslator::hash($job_item_id)) {
         /** @var JobItemInterface $job_item */
         if (!$job_item = JobItem::load($job_item_id)) {
           throw new NotFoundHttpException;

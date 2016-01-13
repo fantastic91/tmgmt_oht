@@ -363,6 +363,22 @@ class OhtTranslator extends TranslatorPluginBase implements ContainerFactoryPlug
   /**
    * {@inheritdoc}
    */
+  public function getSupportedTargetLanguages(TranslatorInterface $translator, $source_language) {
+    $results = array();
+    $language_pairs = $translator->getSupportedLanguagePairs();
+    foreach ($language_pairs as $language_pair) {
+      if ($source_language == $translator->mapToRemoteLanguage($language_pair['source_language'])) {
+        $target_language = $language_pair['target_language'];
+        $results[$target_language] = $target_language;
+      }
+    }
+
+    return $results;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
   public function getSupportedRemoteLanguages(TranslatorInterface $translator) {
     if (!empty($this->supportedRemoteLanguages)) {
       return $this->supportedRemoteLanguages;
